@@ -1,0 +1,42 @@
+{
+  "name": "firestore-advanced-mcp",
+  "version": "1.0.0",
+  "description": "Serveur MCP avancé pour Firestore avec support pour toutes les fonctionnalités avancées: transactions, requêtes composées, opérations atomiques, et plus",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "firestore-advanced-mcp": "./index.js"
+  },
+  "scripts": {
+    "test": "node test-specific.js",
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diez7lm/firestore-advanced-mcp.git"
+  },
+  "keywords": [
+    "firestore",
+    "firebase",
+    "mcp",
+    "claude",
+    "ai",
+    "anthropic",
+    "modelcontextprotocol"
+  ],
+  "author": "Lucie Perret",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/diez7lm/firestore-advanced-mcp/issues"
+  },
+  "homepage": "https://github.com/diez7lm/firestore-advanced-mcp#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.8.0",
+    "firebase-admin": "^13.2.0",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  }
+}
