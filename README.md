@@ -188,16 +188,16 @@ Le serveur fournit les outils suivants à Claude :
 
 Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de détails.
 
-## 👩‍💻 Auteur
+## 👨🏽‍💻 Auteur
 
-- Lucie Perret
+- Diez7lm
 
 ## 🙏 Remerciements
 
 - [Anthropic](https://www.anthropic.com/) pour Claude et le Model Context Protocol
 - [Firebase](https://firebase.google.com/) pour Firestore et les outils de développement
 
-## 💁 Contribution
+## 🦾 Contribution
 
 Les contributions sont les bienvenues ! N'hésitez pas à soumettre une pull request ou à signaler des problèmes via les issues GitHub.
 
