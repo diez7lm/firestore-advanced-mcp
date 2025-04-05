@@ -380,3 +380,209 @@ async function handleMissingIndexError(error, collection, options = {}) {
     collection
   };
 }
+
+// Création du serveur MCP
+const server = new McpServer({
+  transport: new StdioServerTransport(),
+  appName: "Firestore Advanced MCP",
+  appDescription: "Serveur MCP avancé pour Firebase Firestore avec support pour toutes les fonctionnalités"
+});
+
+// Outil pour récupérer un document
+server.tool(
+  'firestore_get',
+  {
+    collection: z.string().describe('Collection dans laquelle se trouve le document'),
+    id: z.string().describe('ID du document à récupérer')
+  },
+  async ({ collection, id }) => {
+    try {
+      // Vérifier si le document est en cache
+      const cacheKey = `${collection}:${id}`;
+      const cachedData = documentCache.get(cacheKey);
+      
+      if (cachedData) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            id,
+            collection,
+            exists: true,
+            data: cachedData,
+            fromCache: true,
+            url: `https://console.firebase.google.com/project/${getProjectId()}/firestore/data/${collection}/${id}`
+          }) }]
+        };
+      }
+      
+      // Si pas en cache, récupérer depuis Firestore
+      const docRef = admin.firestore().collection(collection).doc(id);
+      const doc = await docRef.get();
+      
+      if (!doc.exists) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            id,
+            collection,
+            exists: false,
+            message: `Le document ${collection}/${id} n'existe pas`
+          }) }]
+        };
+      }
+      
+      // Convertir les timestamps et autres types spéciaux
+      const data = convertTimestampsToISO(doc.data());
+      
+      // Mettre en cache
+      documentCache.set(cacheKey, data);
+      
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          id,
+          collection,
+          exists: true,
+          data,
+          fromCache: false,
+          url: `https://console.firebase.google.com/project/${getProjectId()}/firestore/data/${collection}/${id}`
+        }) }]
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        content: [{ type: 'error', text: errorMessage }]
+      };
+    }
+  }
+);
+
+// Outil pour lister les collections disponibles
+server.tool(
+  'firestore_list_collections',
+  {
+    // Optional parameters
+    parentPath: z.string().optional().describe('Chemin parent pour lister les sous-collections (optionnel)')
+  },
+  async ({ parentPath }) => {
+    try {
+      let collectionsRef;
+      
+      if (parentPath) {
+        // If parent path is provided, get subcollections of that document
+        collectionsRef = admin.firestore().doc(parentPath);
+      } else {
+        // If no parent path, get top-level collections
+        collectionsRef = admin.firestore();
+      }
+      
+      const collections = await collectionsRef.listCollections();
+      const collectionNames = collections.map(col => col.id);
+      
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          collections: collectionNames,
+          count: collectionNames.length,
+          parentPath: parentPath || null
+        }) }]
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        content: [{ type: 'error', text: errorMessage }]
+      };
+    }
+  }
+);
+
+// Outil pour créer un document
+server.tool(
+  'firestore_create',
+  {
+    collection: z.string().describe('Collection dans laquelle créer le document'),
+    id: z.string().optional().describe('ID du document (généré automatiquement si non fourni)'),
+    data: z.any().describe('Données à enregistrer dans le document'),
+    merge: z.boolean().default(false).describe('Mode de fusion si le document existe déjà'),
+    specialFields: z.array(z.object({
+      fieldPath: z.string().describe('Chemin du champ à convertir'),
+      type: z.string().describe('Type spécial ("timestamp", "geopoint", "reference", etc.)'),
+      value: z.any().describe('Valeur à convertir')
+    })).optional().describe('Champs spéciaux à convertir automatiquement')
+  },
+  async ({ collection, id, data, merge, specialFields }) => {
+    try {
+      // Créer une référence au document
+      let docRef;
+      const useProvidedId = id !== undefined && id !== null && id !== '';
+      
+      if (useProvidedId) {
+        docRef = admin.firestore().collection(collection).doc(id);
+      } else {
+        // Génération automatique de l'ID
+        docRef = admin.firestore().collection(collection).doc();
+        id = docRef.id;
+      }
+      
+      // Préparer les données à enregistrer
+      let documentData = { ...data };
+      
+      // Traitement des champs spéciaux
+      if (specialFields && specialFields.length > 0) {
+        specialFields.forEach(field => {
+          const { fieldPath, type, value } = field;
+          
+          // Convertir la valeur selon le type spécifié
+          const convertedValue = convertValueToFirestoreType(value, type);
+          
+          // Traitement des chemins imbriqués (ex: "user.address.city")
+          if (fieldPath.includes('.')) {
+            const parts = fieldPath.split('.');
+            let currentObj = documentData;
+            
+            // Créer la structure d'objets imbriqués si nécessaire
+            for (let i = 0; i < parts.length - 1; i++) {
+              const part = parts[i];
+              if (!currentObj[part] || typeof currentObj[part] !== 'object') {
+                currentObj[part] = {};
+              }
+              currentObj = currentObj[part];
+            }
+            
+            // Assigner la valeur convertie au dernier niveau
+            currentObj[parts[parts.length - 1]] = convertedValue;
+          } else {
+            // Cas simple sans imbrication
+            documentData[fieldPath] = convertedValue;
+          }
+        });
+      }
+      
+      // Ajouter/fusionner le document
+      if (merge) {
+        await docRef.set(documentData, { merge: true });
+      } else {
+        await docRef.set(documentData);
+      }
+      
+      // Invalider le cache pour ce document
+      const cacheKey = `${collection}:${id}`;
+      documentCache.invalidate(cacheKey);
+      
+      // Récupérer le document mis à jour
+      const updatedDoc = await docRef.get();
+      const responseData = convertTimestampsToISO(updatedDoc.data());
+      
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          id: docId,
+          collection,
+          data: responseData,
+          created: !merge,
+          merged: merge,
+          url: `https://console.firebase.google.com/project/${getProjectId()}/firestore/data/${collection}/${id}`
+        }) }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'error', text: error.message }]
+      };
+    }
+  }
+);
