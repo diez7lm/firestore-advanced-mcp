@@ -19,6 +19,7 @@ import fs from 'fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { v4 as uuidv4 } from 'uuid';
 
 const { firestore } = admin;
 const { parse: parseJSON } = JSON;
@@ -571,7 +572,7 @@ server.tool(
       
       return {
         content: [{ type: 'text', text: JSON.stringify({
-          id: docId,
+          id,
           collection,
           data: responseData,
           created: !merge,
@@ -586,3 +587,120 @@ server.tool(
     }
   }
 );
+
+// NEW TOOL: Requêtes sur collections groupées
+server.tool(
+  'firestore_collection_group_query',
+  {
+    collectionId: z.string().describe('ID de la collection groupée à requêter'),
+    filters: z.array(z.object({
+      field: z.string().describe('Champ pour le filtre'),
+      operator: z.string().describe('Opérateur de comparaison (==, >, <, >=, <=, !=, array-contains, array-contains-any, in, not-in)'),
+      value: z.any().describe('Valeur à comparer')
+    })).optional().describe('Filtres à appliquer'),
+    limit: z.number().optional().describe('Nombre maximum de résultats à retourner'),
+    orderBy: z.array(z.object({
+      field: z.string().describe('Champ sur lequel trier'),
+      direction: z.enum(['asc', 'desc']).describe('Direction du tri')
+    })).optional().describe('Critères de tri')
+  },
+  async ({ collectionId, filters, limit, orderBy }) => {
+    try {
+      // Créer une requête sur une collection groupée
+      let query = admin.firestore().collectionGroup(collectionId);
+      
+      // Collection Group Queries avec filtres nécessitent des index spéciaux
+      // Voir: https://firebase.google.com/docs/firestore/query-data/queries#collection-group-query
+      
+      // Appliquer les filtres
+      if (filters && filters.length > 0) {
+        filters.forEach(filter => {
+          const value = filter.value;
+          // Pour certains opérateurs (in, array-contains-any), les valeurs doivent être traitées spécialement
+          // pour éviter les erreurs de conversion de type
+          if ((filter.operator === 'in' || filter.operator === 'array-contains-any') && typeof value === 'string') {
+            try {
+              // Tenter de parser si la valeur est un JSON (tableau ou objet)
+              const parsedValue = JSON.parse(value);
+              query = query.where(filter.field, filter.operator, parsedValue);
+            } catch (e) {
+              // Si ce n'est pas un JSON valide, utiliser la valeur telle quelle
+              query = query.where(filter.field, filter.operator, value);
+            }
+          } else {
+            query = query.where(filter.field, filter.operator, value);
+          }
+        });
+      }
+      
+      // Appliquer les critères de tri
+      if (orderBy && orderBy.length > 0) {
+        orderBy.forEach(criteria => {
+          query = query.orderBy(criteria.field, criteria.direction);
+        });
+      }
+      
+      // Appliquer la limite
+      if (limit) {
+        query = query.limit(limit);
+      }
+      
+      // Exécuter la requête
+      const snapshot = await query.get();
+      
+      // Formater les résultats
+      const results = [];
+      snapshot.forEach(doc => {
+        // Récupérer le chemin complet pour chaque document
+        const fullPath = doc.ref.path;
+        const pathParts = fullPath.split('/');
+        const parentCollection = pathParts.slice(0, -2).join('/');
+        
+        results.push({
+          id: doc.id,
+          path: fullPath,
+          parentPath: parentCollection ? parentCollection : null,
+          data: convertTimestampsToISO(doc.data())
+        });
+      });
+      
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          collectionId,
+          filteredCount: filters ? filters.length : 0,
+          resultCount: results.length,
+          results,
+          collectionGroupNote: "Les Collection Group Queries avec filtres nécessitent des index composés spéciaux. Si cette requête ne retourne pas les résultats attendus, créez les index appropriés dans la console Firebase."
+        }) }]
+      };
+    } catch (error) {
+      // Gestion spéciale des erreurs d'index pour les Collection Group Queries
+      const errorHandler = await handleMissingIndexError(error, collectionId, { collectionGroup: true });
+      
+      if (errorHandler.type === 'missing_index') {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: JSON.stringify({
+              error: 'INDEX_REQUIRED',
+              message: errorHandler.message,
+              collectionId: collectionId,
+              description: "Collection Group Query avec filtres",
+              createUrl: errorHandler.createUrl,
+              infoMessage: "Les Collection Group Queries avec filtres nécessitent des index spéciaux. Cliquez sur le lien pour créer l'index nécessaire dans la console Firebase."
+            })
+          }]
+        };
+      } else {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        return {
+          content: [{ type: 'error', text: errorMessage }]
+        };
+      }
+    }
+  }
+);
+
+// Démarrage du serveur
+console.error("Firestore Advanced MCP démarré et prêt à recevoir des commandes!");
+server.listen();
