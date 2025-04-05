@@ -1,6 +1,6 @@
 {
   "name": "firestore-advanced-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Serveur MCP avancé pour Firestore avec support pour toutes les fonctionnalités avancées: transactions, requêtes composées, opérations atomiques, et plus",
   "main": "index.js",
   "type": "module",
