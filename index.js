@@ -115,3 +115,96 @@ try {
   console.error(`Error initializing Firebase: ${error.message}`);
   process.exit(1);
 }
+
+/**
+ * Extracts and returns the project ID from the service account file.
+ */
+function getProjectId(serviceAccountPath) {
+  try {
+    const serviceAccount = parseJSON(fs.readFileSync(serviceAccountPath, 'utf8'));
+    return serviceAccount.project_id;
+  } catch (error) {
+    console.error(`Error reading project ID: ${error.message}`);
+    return null;
+  }
+}
+
+// Helper function to convert Firebase Timestamps to ISO strings recursively
+// avec protection contre les objets circulaires et limitation de profondeur
+function convertTimestampsToISO(data, visitedObjects = new WeakMap(), depth = 0, maxDepth = 20) {
+  // Protection contre les objets null ou undefined
+  
+  // Détection des références circulaires et cas de base
+  if (data === null || data === undefined || typeof data !== 'object') {
+    return data;
+  }
+  
+  if (visitedObjects.has(data)) {
+    return "[Référence circulaire]";
+  }
+  
+  // Marquer cet objet comme visité
+  visitedObjects.set(data, true);
+  
+  // Traiter les types Firestore spécifiques
+  if (data instanceof admin.firestore.Timestamp) {
+    return data.toDate().toISOString();
+  }
+  
+  if (data instanceof admin.firestore.GeoPoint) {
+    return { latitude: data.latitude, longitude: data.longitude };
+  }
+  
+  // Amélioration du traitement des références
+  if (data instanceof admin.firestore.DocumentReference) {
+    return { 
+      type: 'reference',
+      path: data.path,
+      id: data.id,
+      collection: data.parent.id,
+      _isDocumentReference: true
+    };
+  }
+  
+  // Vérifier si l'objet est convertible en référence
+  if (data && typeof data === 'object' && data._isDocumentReference) {
+    return data; // Déjà converti
+  }
+  
+  // Vérifier si l'objet a une propriété 'path' qui semble être une référence
+  if (data && typeof data === 'object' && data.path && typeof data.path === 'string' && 
+      data.path.includes('/') && !Array.isArray(data)) {
+    const pathParts = data.path.split('/');
+    // Si le chemin a un format de référence document (collection/document/...)
+    if (pathParts.length >= 2) {
+      const id = pathParts[pathParts.length - 1];
+      const collection = pathParts[pathParts.length - 2];
+      
+      return {
+        type: 'reference',
+        path: data.path,
+        id: id,
+        collection: collection,
+        _isDocumentReference: true
+      };
+    }
+  }
+  
+  // Traiter les tableaux récursivement
+  if (Array.isArray(data)) {
+    return data.map(item => convertTimestampsToISO(item, visitedObjects, depth + 1, maxDepth));
+  }
+  
+  // Traiter les objets récursivement
+  if (typeof data === 'object') {
+    const result = {};
+    for (const key in data) {
+      if (Object.prototype.hasOwnProperty.call(data, key)) {
+        result[key] = convertTimestampsToISO(data[key], visitedObjects, depth + 1, maxDepth);
+      }
+    }
+    return result;
+  }
+  
+  return data;
+}
