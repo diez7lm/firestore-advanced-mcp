@@ -208,3 +208,175 @@ function convertTimestampsToISO(data, visitedObjects = new WeakMap(), depth = 0,
   
   return data;
 }
+
+// Fonction pour déterminer si une chaîne a la structure d'une référence à un document
+function looksLikeDocumentReference(value) {
+  if (typeof value !== 'string') return false;
+  
+  // Les références ont généralement un format comme "collection/document" ou "collection/document/collection/document"
+  const parts = value.split('/');
+  
+  // Une référence valide doit avoir au moins 2 parties et un nombre pair de parties
+  return parts.length >= 2;
+}
+
+// Fonction pour convertir une valeur en type Firestore approprié
+function convertValueToFirestoreType(value, type) {
+  if (value === null || value === undefined) return null;
+  
+  switch (type) {
+    case 'timestamp':
+      if (typeof value === 'string') {
+        return admin.firestore.Timestamp.fromDate(new Date(value));
+      } else if (value instanceof Date) {
+        return admin.firestore.Timestamp.fromDate(value);
+      } else if (typeof value === 'number') {
+        return admin.firestore.Timestamp.fromMillis(value);
+      }
+      break;
+      
+    case 'geopoint':
+      if (typeof value === 'object' && 'latitude' in value && 'longitude' in value) {
+        return new admin.firestore.GeoPoint(value.latitude, value.longitude);
+      }
+      break;
+      
+    case 'reference':
+      if (typeof value === 'string') {
+        return admin.firestore().doc(value);
+      } else if (value && typeof value === 'object' && value.path) {
+        return admin.firestore().doc(value.path);
+      }
+      break;
+      
+    case 'array':
+      if (Array.isArray(value)) {
+        return value;
+      } else if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          if (Array.isArray(parsed)) {
+            return parsed;
+          }
+        } catch (e) {
+          // Si ce n'est pas un JSON valide, le convertir en tableau singleton
+          return [value];
+        }
+      }
+      return [value]; // Convertir en tableau singleton par défaut
+      
+    case 'map':
+    case 'object':
+      if (typeof value === 'object' && value !== null) {
+        return value;
+      } else if (typeof value === 'string') {
+        try {
+          return JSON.parse(value);
+        } catch (e) {
+          // Si ce n'est pas un JSON valide, retourner un objet avec une propriété value
+          return { value };
+        }
+      }
+      return { value }; // Convertir en objet simple par défaut
+      
+    case 'boolean':
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        const lowercased = value.toLowerCase();
+        if (lowercased === 'true') return true;
+        if (lowercased === 'false') return false;
+      }
+      return Boolean(value);
+      
+    case 'number':
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') {
+        const num = Number(value);
+        if (!isNaN(num)) return num;
+      }
+      break;
+      
+    case 'string':
+      return String(value);
+      
+    case 'null':
+      return null;
+      
+    default:
+      // Si le type n'est pas spécifié ou n'est pas reconnu, essayons de deviner
+      if (value instanceof Date) {
+        return admin.firestore.Timestamp.fromDate(value);
+      } 
+      
+      if (typeof value === 'object' && value !== null) {
+        if ('latitude' in value && 'longitude' in value) {
+          return new admin.firestore.GeoPoint(value.latitude, value.longitude);
+        }
+        
+        if (value._isDocumentReference || (value.path && typeof value.path === 'string')) {
+          return admin.firestore().doc(value.path);
+        }
+      }
+      
+      // Si c'est une chaîne qui semble être une référence à un document
+      if (typeof value === 'string' && looksLikeDocumentReference(value)) {
+        return admin.firestore().doc(value);
+      }
+      
+      // Par défaut, retourner la valeur telle quelle
+      return value;
+  }
+  
+  // Si la conversion a échoué, retourner la valeur telle quelle
+  return value;
+}
+
+// Fonction pour analyser une erreur Firestore et détecter les problèmes d'index manquants
+async function handleMissingIndexError(error, collection, options = {}) {
+  const errorMessage = error.message || '';
+  
+  // Détection des messages d'erreur liés aux index manquants
+  if (errorMessage.includes('requires an index') || 
+      errorMessage.includes('no matching index found') ||
+      errorMessage.includes('needs index')) {
+    
+    // Extraire l'URL pour créer l'index à partir du message d'erreur
+    const indexUrlMatch = errorMessage.match(/https:\/\/console\.firebase\.google\.com\/[^\s]+/);
+    const createUrl = indexUrlMatch ? indexUrlMatch[0] : null;
+    
+    // Type de requête qui a échoué
+    const queryType = options.collectionGroup ? 'Collection Group Query' : 'Collection Query';
+    
+    // Instructions personnalisées pour créer l'index
+    let instructions = '';
+    if (createUrl) {
+      instructions = `Pour résoudre ce problème : 
+1. Visitez ${createUrl}
+2. Connectez-vous à votre projet Firebase
+3. Cliquez sur "Créer index" pour générer l'index manquant`;
+    } else {
+      instructions = `Pour résoudre ce problème :
+1. Accédez à la console Firebase : https://console.firebase.google.com/
+2. Sélectionnez votre projet
+3. Dans le menu de gauche, cliquez sur "Firestore Database"
+4. Allez dans l'onglet "Indexes"
+5. Cliquez sur "Add Index" et configurez l'index pour la collection "${collection}"`;
+    }
+    
+    return {
+      type: 'missing_index',
+      message: `Cette requête complexe nécessite un index spécial. ${errorMessage}`,
+      collection,
+      queryType,
+      createUrl,
+      instructions
+    };
+  }
+  
+  // Si l'erreur n'est pas liée à un index manquant
+  return {
+    type: 'other_error',
+    message: errorMessage,
+    collection
+  };
+}
