@@ -27,7 +27,7 @@
     "anthropic",
     "modelcontextprotocol"
   ],
-  "author": "Lucie Perret",
+  "author": "diez7lm",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/diez7lm/firestore-advanced-mcp/issues"
