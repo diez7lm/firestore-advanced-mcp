@@ -11,7 +11,7 @@
  * - Conversion automatique des types Firestore
  * - Détection intelligente des erreurs d'index manquants
  * 
- * Par Lucie Perret (c) 2025
+ * Par diez7lm (c) 2025
  * Licence MIT
  */
 
