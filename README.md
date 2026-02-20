@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/diez7lm-firestore-advanced-mcp-badge.png)](https://mseep.ai/app/diez7lm-firestore-advanced-mcp)
+
 # 🔥 Firestore Advanced MCP
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
